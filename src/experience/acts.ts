@@ -124,10 +124,16 @@ function onScroll(): void {
 export function initActs(): void {
     writeVars();
     let pending = false;
+    let trailing: number | null = null;
     window.addEventListener('scroll', () => {
-        if (pending) return;
-        pending = true;
-        requestAnimationFrame(() => { pending = false; onScroll(); });
+        if (!pending) {
+            pending = true;
+            requestAnimationFrame(() => { pending = false; onScroll(); });
+        }
+        // A trailing recheck: single-event jumps (hash loads, find-in-page)
+        // can read layout mid-update; settle the act once the dust does.
+        if (trailing !== null) window.clearTimeout(trailing);
+        trailing = window.setTimeout(onScroll, 240);
     }, { passive: true });
     onScroll();
 }
