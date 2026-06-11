@@ -34,6 +34,8 @@ export class ForestRenderer {
     private view: PlayerView | null = null;
     private reveal: PostMortem | null = null;
     private flashes: FlashAnim[] = [];
+    private ripples: { x: number; y: number; born: number }[] = [];
+    private knownIds = new Set<number>();
     private rafId: number | null = null;
     private visible = false;
     private reduced: boolean;
@@ -59,6 +61,8 @@ export class ForestRenderer {
     seedStars(seed: number): void {
         const rng = mulberry32(seed ^ 0x5f3759df);
         this.stars = [];
+        this.ripples = [];
+        this.knownIds = new Set();
         for (let i = 0; i < 130; i++) {
             this.stars.push({
                 x: rng() * MAP_W,
@@ -71,6 +75,15 @@ export class ForestRenderer {
     }
 
     sync(view: PlayerView): void {
+        // New faces in the dark announce themselves with a ripple.
+        for (const c of view.contacts) {
+            if (!this.knownIds.has(c.id)) {
+                this.knownIds.add(c.id);
+                if (view.turn > 0) {
+                    this.ripples.push({ x: c.x, y: c.y, born: performance.now() });
+                }
+            }
+        }
         this.view = view;
         this.reveal = null;
         this.drawOnce();
@@ -178,10 +191,28 @@ export class ForestRenderer {
 
         this.drawReplicator(t, view);
         this.drawFlashes(t);
+        this.drawRipples(t);
         this.drawStrikes(t, view);
         this.drawContacts(t, view);
         this.drawPlayer(t, view);
         this.drawInbound(t, view);
+    }
+
+    /** Expanding ring where something was just found. */
+    private drawRipples(t: number): void {
+        const ctx = this.ctx;
+        this.ripples = this.ripples.filter(r => t - r.born < 1800);
+        for (const r of this.ripples) {
+            const age = (t - r.born) / 1800;
+            const [x, y] = this.mapToCanvas(r.x, r.y);
+            ctx.globalAlpha = (1 - age) * 0.6;
+            ctx.strokeStyle = CIV_COLOR;
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.arc(x, y, 4 + age * 26, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
     }
 
     private drawStars(t: number): void {
@@ -262,14 +293,18 @@ export class ForestRenderer {
             ctx.stroke();
             ctx.setLineDash([]);
 
-            const px = x1 + (x2 - x1) * s.progress;
-            const py = y1 + (y2 - y1) * s.progress;
             const flicker = this.reduced ? 1 : 0.7 + 0.3 * Math.sin(t / 90);
-            ctx.globalAlpha = flicker;
-            ctx.fillStyle = DANGER_COLOR;
-            ctx.beginPath();
-            ctx.arc(px, py, 2.2, 0, Math.PI * 2);
-            ctx.fill();
+            // The lance and its fading wake.
+            for (let i = 0; i < 4; i++) {
+                const p = Math.max(0, s.progress - i * 0.012);
+                const px = x1 + (x2 - x1) * p;
+                const py = y1 + (y2 - y1) * p;
+                ctx.globalAlpha = flicker * (1 - i * 0.28);
+                ctx.fillStyle = DANGER_COLOR;
+                ctx.beginPath();
+                ctx.arc(px, py, 2.2 - i * 0.4, 0, Math.PI * 2);
+                ctx.fill();
+            }
             ctx.globalAlpha = 1;
         }
     }
@@ -335,7 +370,10 @@ export class ForestRenderer {
             ctx.font = this.glyphFont(13);
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 9;
             ctx.fillText(c.joined ? '❋' : '◉', x, y);
+            ctx.shadowBlur = 0;
 
             ctx.globalAlpha = 0.85;
             ctx.font = this.glyphFont(8);
@@ -418,7 +456,10 @@ export class ForestRenderer {
         ctx.font = this.glyphFont(14);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
+        ctx.shadowColor = PLAYER_COLOR;
+        ctx.shadowBlur = 12;
         ctx.fillText('◈', x, y);
+        ctx.shadowBlur = 0;
         ctx.globalAlpha = 0.85;
         ctx.font = this.glyphFont(8);
         ctx.fillText('YOU', x, y + 15);
@@ -455,7 +496,10 @@ export class ForestRenderer {
             ctx.font = this.glyphFont(13);
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
+            ctx.shadowColor = color;
+            ctx.shadowBlur = t.alive || t.joined ? 9 : 0;
             ctx.fillText(t.joined ? '❋' : t.alive ? '◉' : '✕', x, y);
+            ctx.shadowBlur = 0;
             ctx.font = this.glyphFont(8);
             ctx.fillText(`${t.name}`, x, y + 14);
             ctx.globalAlpha = 0.75;

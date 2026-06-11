@@ -34,6 +34,15 @@ import { initReturnGreeting, forceShowGreeting } from './components/return-greet
 // Import The Forest Itself (Part Three: the playable dark forest)
 import { initForestGame, resetForestGame } from './game/ui';
 
+// Import the experience layer (act engine, atmosphere, wayfinding, entrances)
+import { initActs } from './experience/acts';
+import { initAtmosphere } from './experience/atmosphere-gl';
+import { initProgressRail } from './experience/progress-rail';
+import { initReveal } from './experience/reveal';
+import { initPointer } from './experience/pointer';
+import { initAudioInvite } from './experience/audio-invite';
+import { initHeroEntrance } from './experience/hero';
+
 // Import session tracking
 import { initSessionTracking, resetReadingData } from './utils/session';
 
@@ -68,6 +77,12 @@ function handleOrientationChange(): void {
 
 // Initialize everything when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
+    // Experience layer first: the act engine writes the palette every other
+    // surface reads, and the atmosphere sits beneath everything.
+    initActs();
+    initAtmosphere();
+    initHeroEntrance();
+
     // Visualizations
     initNebulae();  // Initialize nebulae first (behind stars)
     initStarfield();
@@ -104,6 +119,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // Phase 8: The Return
     initRealSky();
     initSessionTracking();  // Track reading progress
+
+    // Experience layer: wayfinding, choreography, pointer life, the invitation
+    initProgressRail();
+    initReveal();
+    initPointer();
+    initAudioInvite();
 
     // Handle orientation changes on mobile
     window.addEventListener('orientationchange', handleOrientationChange);

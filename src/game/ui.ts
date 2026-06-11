@@ -41,6 +41,7 @@ interface Els {
     stage: HTMLElement;
     canvas: HTMLCanvasElement;
     year: HTMLElement;
+    stance: HTMLElement;
     eraFill: HTMLElement;
     techFill: HTMLElement;
     sigFill: HTMLElement;
@@ -86,6 +87,7 @@ function buildDOM(root: HTMLElement): Els {
                 <div class="fg-yearwrap">
                     <span class="fg-year">YEAR 0</span>
                     <div class="fg-era-track"><div class="fg-era-fill"></div></div>
+                    <span class="fg-stance">posture · <b>—</b></span>
                 </div>
                 <div class="fg-meters">
                     <div class="fg-meter">
@@ -123,6 +125,7 @@ function buildDOM(root: HTMLElement): Els {
         stage: root.querySelector('.fg-stage')!,
         canvas: root.querySelector('.fg-canvas')!,
         year: root.querySelector('.fg-year')!,
+        stance: root.querySelector('.fg-stance b')!,
         eraFill: root.querySelector('.fg-era-fill')!,
         techFill: root.querySelector('.fg-tech')!,
         sigFill: root.querySelector('.fg-sig')!,
@@ -265,9 +268,11 @@ function truthColor(d: string): string {
 
 function appendLog(lines: { text: string; tone: string }[]): void {
     if (!els) return;
+    let first = els.log.children.length > 0;
     for (const line of lines) {
         const li = document.createElement('li');
-        li.className = `fg-line fg-tone-${line.tone}`;
+        li.className = `fg-line fg-tone-${line.tone}${first ? ' fg-turn-start' : ''}`;
+        first = false;
         li.textContent = line.text;
         els.log.appendChild(li);
     }
@@ -306,7 +311,15 @@ function playEvent(e: TurnEvent, view: PlayerView): void {
             break;
         }
         case 'incoming-glimpse': fgDetection(0); haptics.eyesAlert(); break;
-        case 'struck': fgDeath(); haptics.heavyImpact(); break;
+        case 'struck': {
+            fgDeath();
+            haptics.heavyImpact();
+            if (els) {
+                els.stage.classList.add('fg-struck');
+                window.setTimeout(() => els?.stage.classList.remove('fg-struck'), 2000);
+            }
+            break;
+        }
         case 'civ-died': {
             const c = view.contacts.find(c => c.id === e.id);
             fgDistantImpact(true, c ? panFor(c.x) : 0);
@@ -381,6 +394,14 @@ function syncAll(): void {
     els.techFill.style.width = `${Math.round(view.techBand * 100)}%`;
     els.sigFill.style.width = `${Math.round(view.signature * 100)}%`;
     els.sigLabel.textContent = view.signatureFloored ? 'signature (floored by your own heat)' : 'signature';
+    els.stance.textContent = view.turn === 0 ? '—'
+        : view.posture === 'hide' ? 'hiding'
+        : view.posture === 'grow' ? 'growing'
+        : view.posture === 'listen' ? 'listening'
+        : 'broadcasting';
+    els.actions.querySelectorAll<HTMLButtonElement>('.fg-action').forEach(b => {
+        b.classList.toggle('current', view.turn > 0 && b.dataset.act === view.posture);
+    });
 
     renderer.selected = selectedId;
     renderer.sync(view);

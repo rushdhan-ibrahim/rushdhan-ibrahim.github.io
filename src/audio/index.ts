@@ -9,6 +9,7 @@ import {
 } from './context';
 import { buildSoundscape } from './soundscape';
 import { updateScrollAudio } from './atmosphere';
+import { enableBloom } from './ui-sounds';
 
 // Re-export everything for external use
 export * from './context';
@@ -18,6 +19,7 @@ export * from './joining';
 export * from './atmosphere';
 export * from './whispers';
 export * from './cosmic';
+export * from './ui-sounds';
 
 /**
  * Fade in the audio smoothly
@@ -68,6 +70,8 @@ export function toggleAudio(): boolean {
     fadeOutAudio();
   } else {
     fadeInAudio();
+    // The moment sound is granted deserves a voice of its own.
+    enableBloom();
   }
 
   const newState = !isPlaying;

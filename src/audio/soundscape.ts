@@ -20,10 +20,25 @@ export function buildSoundscape(): void {
   const audioCtx = getAudioContext();
   if (!audioCtx) return;
 
-  // Master output
+  // Master output, split into a dry path and a generated-impulse reverb send.
+  // Every voice in the project routes through masterGain, so the whole
+  // soundscape — drones, pings, the forest game, UI ticks — shares one room.
   const masterGain = audioCtx.createGain();
   masterGain.gain.value = 0;
-  masterGain.connect(audioCtx.destination);
+
+  const dry = audioCtx.createGain();
+  dry.gain.value = 0.82;
+  masterGain.connect(dry);
+  dry.connect(audioCtx.destination);
+
+  const convolver = audioCtx.createConvolver();
+  convolver.buffer = buildImpulse(audioCtx, 2.6, 2.4);
+  const wet = audioCtx.createGain();
+  wet.gain.value = 0.3;
+  masterGain.connect(convolver);
+  convolver.connect(wet);
+  wet.connect(audioCtx.destination);
+
   setMasterGain(masterGain);
 
   // Create audio layers
@@ -32,6 +47,23 @@ export function buildSoundscape(): void {
   createNoiseLayer();
   createSignalLayer();
   createEyesTones();
+}
+
+/**
+ * Generate a stereo impulse response: exponentially decaying noise.
+ * A large, cold, slightly metallic room — the inside of the night.
+ */
+function buildImpulse(ctx: AudioContext, seconds: number, decay: number): AudioBuffer {
+  const rate = ctx.sampleRate;
+  const length = Math.floor(rate * seconds);
+  const impulse = ctx.createBuffer(2, length, rate);
+  for (let ch = 0; ch < 2; ch++) {
+    const data = impulse.getChannelData(ch);
+    for (let i = 0; i < length; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, decay);
+    }
+  }
+  return impulse;
 }
 
 /**

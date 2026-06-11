@@ -1,9 +1,13 @@
+import { uiTick } from '../audio/ui-sounds';
+
 export function initCollapsibles(): void {
     document.querySelectorAll('.collapsible-header').forEach(header => {
         header.addEventListener('click', () => {
             const collapsible = header.parentElement;
             if (collapsible) {
+                const opening = !collapsible.classList.contains('open');
                 collapsible.classList.toggle('open');
+                uiTick(opening);
             }
         });
     });
