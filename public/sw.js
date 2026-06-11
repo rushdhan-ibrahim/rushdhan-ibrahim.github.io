@@ -1,5 +1,5 @@
 // Service Worker for The Dark Forest
-const CACHE_NAME = 'dark-forest-v1';
+const CACHE_NAME = 'dark-forest-v2';
 const STATIC_ASSETS = [
   '/',
   '/index.html'

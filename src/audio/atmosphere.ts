@@ -78,7 +78,7 @@ export function updateScrollAudio(): void {
   applyVelocityEffects(scrollVelocity);
 
   // Detect current section
-  const sections = ['steelman', 'cracks', 'pluribus', 'alternatives', 'assessment'];
+  const sections = ['steelman', 'cracks', 'pluribus', 'the-forest', 'alternatives', 'assessment'];
   let newSection = 'intro';
 
   sections.forEach(id => {
@@ -154,6 +154,16 @@ export function transitionAtmosphere(section: string): void {
       });
       if (audioLayers.pad) {
         audioLayers.pad.gain.gain.linearRampToValueAtTime(0.06, now + transitionTime);
+      }
+      break;
+
+    case 'the-forest':
+      // Predatory stillness - the drone sinks low and the pad thins to a thread
+      audioLayers.drone.oscillators.forEach((d) => {
+        d.osc.frequency.exponentialRampToValueAtTime(d.baseFreq * 0.78, now + transitionTime + 2);
+      });
+      if (audioLayers.pad) {
+        audioLayers.pad.gain.gain.linearRampToValueAtTime(0.03, now + transitionTime + 2);
       }
       break;
 

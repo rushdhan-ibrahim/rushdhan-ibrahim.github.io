@@ -79,6 +79,7 @@ export const sectionMarkers: SectionMarkers = {
   steelman: { mood: 'tension' },
   cracks: { mood: 'relief' },
   pluribus: { mood: 'alien' },
+  'the-forest': { mood: 'stillness' },
   alternatives: { mood: 'contemplation' },
   assessment: { mood: 'resolution' }
 };

@@ -31,6 +31,9 @@ import { initTransmission, resetTransmission } from './components/transmission';
 import { initCredenceInput, resetCredences } from './components/credence-input';
 import { initReturnGreeting, forceShowGreeting } from './components/return-greeting';
 
+// Import The Forest Itself (Part Three: the playable dark forest)
+import { initForestGame, resetForestGame } from './game/ui';
+
 // Import session tracking
 import { initSessionTracking, resetReadingData } from './utils/session';
 
@@ -96,6 +99,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initTransmission();
     initCredenceInput();
     initReturnGreeting();  // Welcome back returning readers
+    initForestGame();      // Part Three: The Forest Itself
 
     // Phase 8: The Return
     initRealSky();
@@ -148,6 +152,7 @@ declare global {
         resetRealSky: typeof resetRealSky;
         forceShowGreeting: typeof forceShowGreeting;
         resetReadingData: typeof resetReadingData;
+        resetForestGame: typeof resetForestGame;
     }
 }
 
@@ -167,3 +172,4 @@ window.resetCredences = resetCredences;
 window.resetRealSky = resetRealSky;
 window.forceShowGreeting = forceShowGreeting;
 window.resetReadingData = resetReadingData;
+window.resetForestGame = resetForestGame;
