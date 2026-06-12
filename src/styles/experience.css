@@ -417,13 +417,17 @@ nav .nav-links a:hover {
     opacity: 1;
 }
 
+.hero-word {
+    display: inline-block;
+    white-space: nowrap;
+}
+
 .hero-char {
     display: inline-block;
     opacity: 0;
     filter: blur(10px);
     transform: translateY(0.18em) scale(1.06);
     animation: char-condense 1.6s cubic-bezier(0.2, 0.65, 0.25, 1) var(--d, 0s) forwards;
-    white-space: pre;
 }
 
 @keyframes char-condense {
@@ -661,6 +665,29 @@ footer::before {
 
     .prose p.opener::first-letter {
         font-size: 2.6em;
+    }
+}
+
+/* Print: the experience layer is for screens; paper gets the essay. */
+@media print {
+    #atmosphere-gl,
+    .progress-rail,
+    .pointer-aura,
+    .audio-invite,
+    .part-ghost {
+        display: none !important;
+    }
+
+    .rv {
+        opacity: 1 !important;
+        transform: none !important;
+        filter: none !important;
+    }
+
+    .section-header h2 {
+        -webkit-text-fill-color: initial;
+        color: #1a1a1a;
+        background: none;
     }
 }
 

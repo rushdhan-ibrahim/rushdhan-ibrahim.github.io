@@ -17,19 +17,32 @@ export function initHeroEntrance(): void {
     h1.innerHTML = '';
     h1.classList.add('materialize');
 
-    // Deterministic shuffle of arrival order: middle letters first, edges last,
-    // with a little interleave so it reads as condensation, not a wipe.
+    // Deterministic arrival order: middle letters first, edges last, with a
+    // little interleave so it reads as condensation, not a wipe.
     const chars = Array.from(text);
     const order = chars.map((_, i) => i)
         .sort((a, b) => Math.abs(a - chars.length / 2) - Math.abs(b - chars.length / 2));
 
+    // Letters are grouped into unbreakable word spans with real spaces between
+    // them, so narrow screens wrap between words — never through one.
+    let wordSpan: HTMLSpanElement | null = null;
     chars.forEach((ch, i) => {
+        if (ch === ' ') {
+            h1.appendChild(document.createTextNode(' '));
+            wordSpan = null;
+            return;
+        }
+        if (!wordSpan) {
+            wordSpan = document.createElement('span');
+            wordSpan.className = 'hero-word';
+            wordSpan.setAttribute('aria-hidden', 'true');
+            h1.appendChild(wordSpan);
+        }
         const span = document.createElement('span');
         span.className = 'hero-char';
-        span.setAttribute('aria-hidden', 'true');
-        span.textContent = ch === ' ' ? ' ' : ch;
+        span.textContent = ch;
         const rank = order.indexOf(i);
         span.style.setProperty('--d', `${0.25 + rank * 0.055 + (rank % 3) * 0.04}s`);
-        h1.appendChild(span);
+        wordSpan.appendChild(span);
     });
 }
