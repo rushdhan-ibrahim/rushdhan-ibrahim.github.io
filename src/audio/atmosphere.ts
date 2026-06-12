@@ -9,12 +9,29 @@ import {
   setScrollProgress
 } from './context';
 
+import { onDocumentReflow, absoluteTop } from '../utils/offset-cache';
+
 // Scroll velocity tracking
 let lastScrollY = 0;
 let lastScrollTime = performance.now();
 let scrollVelocity = 0;
 let isPaused = false;
 let pauseTimeout: number | null = null;
+
+// Section anchor offsets, cached: no layout reads in the scroll handler.
+const SECTION_IDS = ['steelman', 'cracks', 'pluribus', 'the-forest', 'alternatives', 'assessment'];
+let sectionTops: { id: string; top: number }[] = [];
+let sectionsMeasured = false;
+
+function measureSections(): void {
+    sectionTops = SECTION_IDS
+        .map(id => {
+            const el = document.getElementById(id);
+            return el ? { id, top: absoluteTop(el) } : null;
+        })
+        .filter((s): s is { id: string; top: number } => s !== null);
+    sectionsMeasured = true;
+}
 
 /**
  * Get current scroll velocity (pixels per second)
@@ -77,19 +94,13 @@ export function updateScrollAudio(): void {
   // Apply velocity-based audio adjustments
   applyVelocityEffects(scrollVelocity);
 
-  // Detect current section
-  const sections = ['steelman', 'cracks', 'pluribus', 'the-forest', 'alternatives', 'assessment'];
+  // Detect current section from cached offsets — zero layout reads here.
+  if (!sectionsMeasured) onDocumentReflow(measureSections);
+  const threshold = scrollY + window.innerHeight * 0.5;
   let newSection = 'intro';
-
-  sections.forEach(id => {
-    const el = document.getElementById(id);
-    if (el) {
-      const rect = el.getBoundingClientRect();
-      if (rect.top < window.innerHeight * 0.5) {
-        newSection = id;
-      }
-    }
-  });
+  for (const s of sectionTops) {
+    if (s.top < threshold) newSection = s.id;
+  }
 
   if (newSection !== getCurrentSection()) {
     setCurrentSection(newSection);

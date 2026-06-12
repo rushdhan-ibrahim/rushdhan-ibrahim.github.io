@@ -1464,22 +1464,6 @@ export const WEBGL_PHASES = {
     fadeout: { start: 24, end: 28 }
 };
 
-function compileShader(gl: WebGLRenderingContext, type: number, source: string): WebGLShader | null {
-    const shader = gl.createShader(type);
-    if (!shader) return null;
-
-    gl.shaderSource(shader, source);
-    gl.compileShader(shader);
-
-    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-        console.error('Shader compile error:', gl.getShaderInfoLog(shader));
-        gl.deleteShader(shader);
-        return null;
-    }
-
-    return shader;
-}
-
 // Query DOM for content boxes with three-tier classification
 // Type 0: EXCLUDED (nav) - no glass effects
 // Type 1: VIZ BOXES - light pooling effect
@@ -1577,7 +1561,25 @@ function queryContentBoxes(): ContentBox[] {
     return boxes.slice(0, MAX_CONTENT_BOXES);
 }
 
+// The machine is built once and kept warm: context creation and the large
+// fragment-shader compile used to happen at the moment of trigger — a visible
+// hitch. Now the first build (ideally during idle prewarm) pays that cost,
+// and every event after reuses the same canvas, context, and program.
+let cachedRenderer: WebGLSupernovaRenderer | null = null;
+let cachedRebind: ((c: WebGLSupernovaConfig) => void) | null = null;
+
+/** Build (and warm) the renderer during idle time so the first real event is instant. */
+export function prewarmWebGLSupernova(): void {
+    if (cachedRenderer) return;
+    createWebGLSupernova({ fate: 0 });
+}
+
 export function createWebGLSupernova(config: WebGLSupernovaConfig): WebGLSupernovaRenderer | null {
+    if (cachedRenderer && cachedRebind) {
+        cachedRebind(config);
+        return cachedRenderer;
+    }
+
     // Create canvas - positioned behind content
     const canvas = document.createElement('canvas');
     canvas.id = 'webgl-supernova-canvas';
@@ -1631,14 +1633,21 @@ export function createWebGLSupernova(config: WebGLSupernovaConfig): WebGLSuperno
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-    // Compile shaders
-    const vertexShader = compileShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER);
-    const fragmentShader = compileShader(gl, gl.FRAGMENT_SHADER, FRAGMENT_SHADER);
-
+    // Compile shaders WITHOUT querying status: a status query forces the
+    // driver to finish compiling synchronously on this very frame. Failures
+    // surface at link-finalization instead, where we can afford to look.
+    const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+    const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
     if (!vertexShader || !fragmentShader) {
         canvas.remove();
         return null;
     }
+    const vs = vertexShader;
+    const fs = fragmentShader;
+    gl.shaderSource(vs, VERTEX_SHADER);
+    gl.compileShader(vs);
+    gl.shaderSource(fs, FRAGMENT_SHADER);
+    gl.compileShader(fs);
 
     // Create program
     const program = gl.createProgram();
@@ -1647,54 +1656,115 @@ export function createWebGLSupernova(config: WebGLSupernovaConfig): WebGLSuperno
         return null;
     }
 
-    gl.attachShader(program, vertexShader);
-    gl.attachShader(program, fragmentShader);
+    gl.attachShader(program, vs);
+    gl.attachShader(program, fs);
     gl.linkProgram(program);
 
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        console.error('Program link error:', gl.getProgramInfoLog(program));
-        canvas.remove();
-        return null;
-    }
+    // Deliberately NO LINK_STATUS query here: any program query forces the
+    // main thread to wait for the (large) compile. With
+    // KHR_parallel_shader_compile the driver links on background threads and
+    // we poll; everything that must touch the linked program waits in
+    // finalizeProgram().
+    const parallelExt = gl.getExtension('KHR_parallel_shader_compile') as { COMPLETION_STATUS_KHR: number } | null;
 
-    gl.useProgram(program);
-
-    // Create vertex buffer (fullscreen triangle)
+    // Create vertex buffer (fullscreen triangle) — independent of linking.
     const buffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
 
-    const pAttr = gl.getAttribLocation(program, 'p');
-    gl.enableVertexAttribArray(pAttr);
-    gl.vertexAttribPointer(pAttr, 2, gl.FLOAT, false, 0, 0);
-
     // Use the early mobile detection (already set body.mobile class)
     const isMobile = isMobileDevice;
 
-    // Get uniform locations
-    const uR = gl.getUniformLocation(program, 'R');
-    const uT = gl.getUniformLocation(program, 'T');
-    const uM = gl.getUniformLocation(program, 'M');
-    const uFate = gl.getUniformLocation(program, 'fate');
-    const uAge = gl.getUniformLocation(program, 'age');
-    const uMobile = gl.getUniformLocation(program, 'mobile');
-    const uDiskPrecessLoc = gl.getUniformLocation(program, 'uDiskPrecess');
-    const uNumBoxes = gl.getUniformLocation(program, 'numBoxes');
-
-    // Get uniform locations for content box arrays
+    // Uniform locations are resolved after the link completes.
+    let uR: WebGLUniformLocation | null = null;
+    let uT: WebGLUniformLocation | null = null;
+    let uM: WebGLUniformLocation | null = null;
+    let uFate: WebGLUniformLocation | null = null;
+    let uAge: WebGLUniformLocation | null = null;
+    let uMobile: WebGLUniformLocation | null = null;
+    let uDiskPrecessLoc: WebGLUniformLocation | null = null;
+    let uNumBoxes: WebGLUniformLocation | null = null;
     const uContentBoxes: WebGLUniformLocation[] = [];
     const uBoxOpacities: WebGLUniformLocation[] = [];
     const uBoxTypes: WebGLUniformLocation[] = [];
-    for (let i = 0; i < MAX_CONTENT_BOXES; i++) {
-        const boxLoc = gl.getUniformLocation(program, `contentBoxes[${i}]`);
-        const opacityLoc = gl.getUniformLocation(program, `boxOpacities[${i}]`);
-        const typeLoc = gl.getUniformLocation(program, `boxTypes[${i}]`);
-        if (boxLoc) uContentBoxes.push(boxLoc);
-        if (opacityLoc) uBoxOpacities.push(opacityLoc);
-        if (typeLoc) uBoxTypes.push(typeLoc);
+
+    let programReady = false;
+    let programBroken = false;
+
+    function finalizeProgram(): boolean {
+        if (programReady) return true;
+        if (programBroken) return false;
+
+        if (!gl!.getProgramParameter(program!, gl!.LINK_STATUS)) {
+            console.error('Program link error:', gl!.getProgramInfoLog(program!));
+            console.error('VS log:', gl!.getShaderInfoLog(vs));
+            console.error('FS log:', gl!.getShaderInfoLog(fs));
+            programBroken = true;
+            return false;
+        }
+
+        gl!.useProgram(program!);
+
+        const pAttr = gl!.getAttribLocation(program!, 'p');
+        gl!.enableVertexAttribArray(pAttr);
+        gl!.vertexAttribPointer(pAttr, 2, gl!.FLOAT, false, 0, 0);
+
+        uR = gl!.getUniformLocation(program!, 'R');
+        uT = gl!.getUniformLocation(program!, 'T');
+        uM = gl!.getUniformLocation(program!, 'M');
+        uFate = gl!.getUniformLocation(program!, 'fate');
+        uAge = gl!.getUniformLocation(program!, 'age');
+        uMobile = gl!.getUniformLocation(program!, 'mobile');
+        uDiskPrecessLoc = gl!.getUniformLocation(program!, 'uDiskPrecess');
+        uNumBoxes = gl!.getUniformLocation(program!, 'numBoxes');
+
+        for (let i = 0; i < MAX_CONTENT_BOXES; i++) {
+            const boxLoc = gl!.getUniformLocation(program!, `contentBoxes[${i}]`);
+            const opacityLoc = gl!.getUniformLocation(program!, `boxOpacities[${i}]`);
+            const typeLoc = gl!.getUniformLocation(program!, `boxTypes[${i}]`);
+            if (boxLoc) uContentBoxes.push(boxLoc);
+            if (opacityLoc) uBoxOpacities.push(opacityLoc);
+            if (typeLoc) uBoxTypes.push(typeLoc);
+        }
+
+        // One tiny hidden draw flushes any remaining lazy compile now.
+        canvas.width = 8;
+        canvas.height = 8;
+        gl!.viewport(0, 0, 8, 8);
+        gl!.uniform2f(uR, 8, 8);
+        gl!.uniform1f(uT, 0.01);
+        gl!.uniform2f(uM, 4, 4);
+        gl!.uniform1f(uFate, 0);
+        gl!.uniform1f(uAge, 0);
+        gl!.uniform1f(uMobile, isMobile ? 1.0 : 0.0);
+        gl!.uniform2f(uDiskPrecessLoc, 1, 0);
+        gl!.uniform1i(uNumBoxes, 0);
+        gl!.clearColor(0, 0, 0, 0);
+        gl!.clear(gl!.COLOR_BUFFER_BIT);
+        gl!.drawArrays(gl!.TRIANGLES, 0, 3);
+
+        programReady = true;
+        return true;
+    }
+
+    // Poll for background link completion; finalize off the hot path.
+    if (parallelExt) {
+        const poll = () => {
+            if (programReady || programBroken) return;
+            if (gl!.getProgramParameter(program!, parallelExt.COMPLETION_STATUS_KHR)) {
+                finalizeProgram();
+            } else {
+                window.setTimeout(poll, 120);
+            }
+        };
+        window.setTimeout(poll, 120);
+    } else {
+        // No extension: finalize soon, but never on the construction frame.
+        window.setTimeout(() => finalizeProgram(), 400);
     }
 
     // State
+    let activeConfig: WebGLSupernovaConfig = config;
     let width = 0;
     let height = 0;
     let mouse = [0, 0];
@@ -1967,7 +2037,7 @@ export function createWebGLSupernova(config: WebGLSupernovaConfig): WebGLSuperno
         }
         // ─── FINAL PHASE (T > 16) ───
         else {
-            if (config.fate < 0.5) {
+            if (activeConfig.fate < 0.5) {
                 // Neutron star - pulsar flashes
                 const pulsarRate = 1.5;
                 const pulse = 0.5 + 0.5 * Math.sin(t * pulsarRate * Math.PI * 2);
@@ -2025,7 +2095,7 @@ export function createWebGLSupernova(config: WebGLSupernovaConfig): WebGLSuperno
         let gwIntensity = 0;
         let gwPhase = 0;
 
-        if (config.fate > 0.5 && t > 12) {
+        if (activeConfig.fate > 0.5 && t > 12) {
             // BH forms at T=16, strength builds
             bhStrength = smoothstep(16, 36, t);
             bhStrength *= 1.0 + 0.1 * Math.sin(t * 0.15);
@@ -2290,7 +2360,7 @@ export function createWebGLSupernova(config: WebGLSupernovaConfig): WebGLSuperno
         if (t < WEBGL_PHASES.progenitor.end) return 'progenitor';
         if (t < WEBGL_PHASES.explosion.end) return 'explosion';
         if (t < WEBGL_PHASES.remnant.end) return 'remnant';
-        if (t < WEBGL_PHASES.finalState.end) return config.fate > 0.5 ? 'blackhole' : 'neutron';
+        if (t < WEBGL_PHASES.finalState.end) return activeConfig.fate > 0.5 ? 'blackhole' : 'neutron';
         if (t < WEBGL_PHASES.fadeout.end) return 'fadeout';
         return 'complete';
     }
@@ -2308,11 +2378,11 @@ export function createWebGLSupernova(config: WebGLSupernovaConfig): WebGLSuperno
         const currentPhase = getCurrentPhase(t);
         if (currentPhase !== lastPhase) {
             lastPhase = currentPhase;
-            config.onPhaseChange?.(currentPhase, t);
+            activeConfig.onPhaseChange?.(currentPhase, t);
 
             if (currentPhase === 'complete') {
                 stop();
-                config.onComplete?.();
+                activeConfig.onComplete?.();
                 return;
             }
         }
@@ -2327,7 +2397,7 @@ export function createWebGLSupernova(config: WebGLSupernovaConfig): WebGLSuperno
         glContext.uniform2f(uR, width, height);
         glContext.uniform1f(uT, t);
         glContext.uniform2f(uM, smoothMouse[0], smoothMouse[1]);
-        glContext.uniform1f(uFate, config.fate);
+        glContext.uniform1f(uFate, activeConfig.fate);
         glContext.uniform1f(uAge, 0);
         glContext.uniform1f(uMobile, isMobile ? 1.0 : 0.0);
         // Pre-compute disk precession trig (was per-pixel, now once per frame)
@@ -2374,6 +2444,14 @@ export function createWebGLSupernova(config: WebGLSupernovaConfig): WebGLSuperno
     function start() {
         if (running) return;
 
+        // If an event fires before the background link finished, finalize now
+        // (a rare synchronous wait); if the program is broken, exit cleanly.
+        if (!finalizeProgram()) {
+            activeConfig.onComplete?.();
+            return;
+        }
+
+        canvas.style.display = 'block';
         running = true;
         startTime = performance.now();
         lastPhase = '';
@@ -2402,7 +2480,7 @@ export function createWebGLSupernova(config: WebGLSupernovaConfig): WebGLSuperno
         window.addEventListener('scroll', handleScroll, { passive: true });
 
         // Start cosmic audio (synced with visual)
-        startCosmicAudio(config.fate);
+        startCosmicAudio(activeConfig.fate);
 
         // Fade in
         requestAnimationFrame(() => {
@@ -2437,19 +2515,16 @@ export function createWebGLSupernova(config: WebGLSupernovaConfig): WebGLSuperno
     function destroy() {
         stop();
 
-        // Clean up WebGL resources
-        glContext.deleteProgram(program);
-        glContext.deleteShader(vertexShader);
-        glContext.deleteShader(fragmentShader);
-        glContext.deleteBuffer(buffer);
-
-        // Remove canvas after fade
+        // The machine stays warm for the next event: program, buffers and
+        // canvas all survive. Only the compositor layer is released.
         setTimeout(() => {
-            canvas.remove();
+            if (!running) canvas.style.display = 'none';
         }, 600);
     }
 
-    return {
+    canvas.style.display = 'none';
+
+    const renderer: WebGLSupernovaRenderer = {
         start,
         stop,
         destroy,
@@ -2457,4 +2532,7 @@ export function createWebGLSupernova(config: WebGLSupernovaConfig): WebGLSuperno
         isRunning: () => running,
         updateContentBoxes
     };
+    cachedRenderer = renderer;
+    cachedRebind = (c) => { activeConfig = c; };
+    return renderer;
 }

@@ -5,6 +5,8 @@
 // connected; the active one glows with the act's color. Desktop only — on
 // small screens the hamburger already carries the map.
 
+import { onDocumentReflow, absoluteTop } from '../utils/offset-cache';
+
 const STATIONS: { id: string; label: string }[] = [
     { id: 'steelman', label: 'Part One — The Case' },
     { id: 'cracks', label: 'Part Two — The Cracks' },
@@ -55,13 +57,16 @@ export function initProgressRail(): void {
     if (stars.length === 0) return;
     document.body.appendChild(rail);
 
+    // Station offsets cached; scroll updates read scrollY alone.
+    let tops: number[] = stars.map(() => Infinity);
+
     let pending = false;
     const update = () => {
         pending = false;
-        const mid = window.innerHeight * 0.45;
+        const threshold = window.scrollY + window.innerHeight * 0.45;
         let lastPassed = -1;
         stars.forEach((s, i) => {
-            const passed = s.target.getBoundingClientRect().top < mid;
+            const passed = tops[i] < threshold;
             s.el.classList.toggle('passed', passed);
             if (passed) lastPassed = i;
         });
@@ -76,5 +81,8 @@ export function initProgressRail(): void {
             requestAnimationFrame(update);
         }
     }, { passive: true });
-    update();
+    onDocumentReflow(() => {
+        tops = stars.map(s => absoluteTop(s.target));
+        update();
+    });
 }

@@ -3,11 +3,13 @@
 
 import {
     createWebGLSupernova,
+    prewarmWebGLSupernova,
     WebGLSupernovaRenderer
 } from './webgl-supernova';
 
 import { getMasterGain } from '../audio/context';
 import { haptics } from '../haptics';
+import { setStarfieldGravity, setStarfieldDim, setStarfieldShockwave } from './starfield';
 
 // ============================================================================
 // TYPES AND INTERFACES
@@ -76,6 +78,7 @@ interface ActiveCosmicEvent {
     gravityAnimationId: number | null;
     affectedStars: StarGravityState[];
     affectedTextElements: HTMLElement[];
+    warpScrollHandler?: (() => void) | null;
     startTime: number;
     x: number;  // percentage
     y: number;  // percentage
@@ -95,10 +98,7 @@ const cosmicEvents: CosmicEvent[] = [
 // Black hole formation probability (35% for dramatic effect)
 const BLACK_HOLE_PROBABILITY = 0.35;
 
-// Gravity effect parameters (in viewport percentage)
-const GRAVITY_RADIUS = 25;        // % of viewport where effect begins
-const STRONG_GRAVITY_RADIUS = 8;  // % where stretching is pronounced
-const HORIZON_RADIUS = 3;         // % where stars disappear
+// Gravity effect parameters now live in the starfield canvas (field effects).
 
 // Text warp parameters
 const TEXT_WARP_RADIUS = 300;     // pixels
@@ -1852,102 +1852,49 @@ function animateBlackHoleFadeout(elements: BlackHoleElements): void {
 // GRAVITATIONAL EFFECTS ON STARS
 // ============================================================================
 
-function getAffectedStars(bhX: number, bhY: number): StarGravityState[] {
-    const stars: StarGravityState[] = [];
-
-    document.querySelectorAll('#starfield .ascii-star').forEach(el => {
-        const star = el as HTMLElement;
-        const x = parseFloat(star.dataset.x || '0');
-        const y = parseFloat(star.dataset.y || '0');
-        const dist = Math.sqrt(Math.pow(bhX - x, 2) + Math.pow(bhY - y, 2));
-
-        if (dist <= GRAVITY_RADIUS) {
-            stars.push({
-                el: star,
-                originalX: x,
-                originalY: y,
-                originalOpacity: parseFloat(star.dataset.baseOpacity || '0.5'),
-                originalTransform: star.style.transform || 'none'
-            });
-        }
-    });
-
-    return stars;
+function getAffectedStars(_bhX: number, _bhY: number): StarGravityState[] {
+    // Star gravity now lives in the starfield canvas as a field effect;
+    // there are no per-star elements to collect.
+    return [];
 }
 
 function applyGravitationalEffects(
     bhX: number,
     bhY: number,
-    affectedStars: StarGravityState[],
+    _affectedStars: StarGravityState[],
     intensity: number = 1
 ): void {
-    affectedStars.forEach(star => {
-        const dx = bhX - star.originalX;
-        const dy = bhY - star.originalY;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-
-        if (distance < 0.1) return; // Avoid division by zero
-
-        // Calculate pull strength (inverse square, capped)
-        const normalizedDist = distance / GRAVITY_RADIUS;
-        const pullStrength = Math.pow(1 - normalizedDist, 2) * intensity;
-
-        // Displacement toward black hole
-        const angle = Math.atan2(dy, dx);
-        const maxDisplacement = 8; // Max % displacement
-        const displacement = pullStrength * maxDisplacement;
-
-        const newX = star.originalX + Math.cos(angle) * displacement;
-        const newY = star.originalY + Math.sin(angle) * displacement;
-
-        // Apply position
-        star.el.style.left = `${newX}%`;
-        star.el.style.top = `${newY}%`;
-
-        // Stretching effect near event horizon
-        if (distance < STRONG_GRAVITY_RADIUS) {
-            const stretchIntensity = 1 - (distance / STRONG_GRAVITY_RADIUS);
-            const stretchFactor = 1 + stretchIntensity * 2 * intensity; // Up to 3x stretch
-            const stretchAngle = angle * (180 / Math.PI);
-            star.el.style.transform = `rotate(${stretchAngle}deg) scaleX(${stretchFactor})`;
-
-            // Dim as approaching horizon
-            const opacityFactor = distance / STRONG_GRAVITY_RADIUS;
-            star.el.style.opacity = String(star.originalOpacity * opacityFactor * intensity);
-        }
-
-        // Stars at event horizon disappear
-        if (distance < HORIZON_RADIUS) {
-            if (star.el.style.opacity !== '0') {
-                // Play consumption sound with panning based on position
-                const panPosition = (bhX - 50) / 50; // -1 to 1
-                playStarConsumptionSound(panPosition);
-            }
-            star.el.style.opacity = '0';
-        }
+    setStarfieldGravity({
+        x: bhX,
+        y: bhY,
+        intensity,
+        onConsume: (pan) => playStarConsumptionSound(pan),
     });
 }
 
-function restoreStars(affectedStars: StarGravityState[]): void {
-    affectedStars.forEach(star => {
-        star.el.style.transition = 'all 2s ease-out';
-        star.el.style.left = `${star.originalX}%`;
-        star.el.style.top = `${star.originalY}%`;
-        star.el.style.transform = star.originalTransform;
-        star.el.style.opacity = String(star.originalOpacity);
-    });
-
-    // Remove transition after animation
-    setTimeout(() => {
-        affectedStars.forEach(star => {
-            star.el.style.transition = '';
-        });
-    }, 2100);
+function restoreStars(_affectedStars: StarGravityState[]): void {
+    // Release the field; the canvas eases every star home.
+    setStarfieldGravity(null);
 }
 
 // ============================================================================
 // TEXT WARPING (Desktop only)
 // ============================================================================
+
+// Element centers are measured once per event (and on scroll), never per
+// frame — and the warp itself is transform+filter only, so no layout ever
+// happens inside the animation loop.
+const textWarpCenters = new Map<HTMLElement, { x: number; y: number }>();
+
+function measureTextCenters(elements: HTMLElement[]): void {
+    for (const el of elements) {
+        const rect = el.getBoundingClientRect();
+        textWarpCenters.set(el, {
+            x: rect.left + rect.width / 2,
+            y: rect.top + rect.height / 2,
+        });
+    }
+}
 
 function getAffectedTextElements(bhScreenX: number, bhScreenY: number): HTMLElement[] {
     if (isMobile) return []; // Skip on mobile for performance
@@ -1963,7 +1910,10 @@ function getAffectedTextElements(bhScreenX: number, bhScreenY: number): HTMLElem
         );
 
         if (dist < TEXT_WARP_RADIUS) {
-            elements.push(el as HTMLElement);
+            const h = el as HTMLElement;
+            h.classList.add('warping');
+            textWarpCenters.set(h, { x: elCenterX, y: elCenterY });
+            elements.push(h);
         }
     });
     return elements;
@@ -1975,35 +1925,31 @@ function applyTextWarping(
     elements: HTMLElement[],
     intensity: number = 1
 ): void {
-    elements.forEach(el => {
-        const rect = el.getBoundingClientRect();
-        const elCenterX = rect.left + rect.width / 2;
-        const elCenterY = rect.top + rect.height / 2;
+    for (const el of elements) {
+        const c = textWarpCenters.get(el);
+        if (!c) continue;
         const dist = Math.sqrt(
-            Math.pow(bhScreenX - elCenterX, 2) +
-            Math.pow(bhScreenY - elCenterY, 2)
+            Math.pow(bhScreenX - c.x, 2) +
+            Math.pow(bhScreenY - c.y, 2)
         );
 
         if (dist < TEXT_WARP_RADIUS) {
             const warpIntensity = (1 - dist / TEXT_WARP_RADIUS) * intensity;
-            el.style.letterSpacing = `${0.03 * warpIntensity}em`;
+            // Lensing without layout: a breath of scale toward the singularity
+            // and a haze of blur — compositor and paint only.
+            el.style.transform = `scale(${1 + 0.012 * warpIntensity})`;
             el.style.filter = `blur(${0.3 * warpIntensity}px)`;
         }
-    });
+    }
 }
 
 function restoreTextElements(elements: HTMLElement[]): void {
     elements.forEach(el => {
-        el.style.transition = 'letter-spacing 1s ease-out, filter 1s ease-out';
-        el.style.letterSpacing = '';
+        el.classList.remove('warping');
+        el.style.transform = '';
         el.style.filter = '';
     });
-
-    setTimeout(() => {
-        elements.forEach(el => {
-            el.style.transition = '';
-        });
-    }, 1100);
+    textWarpCenters.clear();
 }
 
 // ============================================================================
@@ -2020,6 +1966,19 @@ function startGravityLoop(event: ActiveCosmicEvent): void {
 
     // Get affected text elements
     event.affectedTextElements = getAffectedTextElements(bhScreenX, bhScreenY);
+
+    // Text centers move when the reader scrolls; remeasure then, never per frame.
+    let scrollPending = false;
+    const onWarpScroll = () => {
+        if (scrollPending) return;
+        scrollPending = true;
+        requestAnimationFrame(() => {
+            scrollPending = false;
+            measureTextCenters(event.affectedTextElements);
+        });
+    };
+    window.addEventListener('scroll', onWarpScroll, { passive: true });
+    event.warpScrollHandler = onWarpScroll;
 
     function animate(timestamp: number): void {
         if (!activeEvent || activeEvent.state === 'cleanup') return;
@@ -2051,6 +2010,10 @@ function stopGravityLoop(event: ActiveCosmicEvent): void {
     if (event.gravityAnimationId) {
         cancelAnimationFrame(event.gravityAnimationId);
         event.gravityAnimationId = null;
+    }
+    if (event.warpScrollHandler) {
+        window.removeEventListener('scroll', event.warpScrollHandler);
+        event.warpScrollHandler = null;
     }
 
     restoreStars(event.affectedStars);
@@ -2498,57 +2461,25 @@ function createArtisticSupernovaElements(x: number, y: number): ArtisticSupernov
     };
 }
 
-// Dim nearby stars during pre-ignition (light being drawn in)
+// Dim nearby stars during pre-ignition (light being drawn in).
+// The starfield canvas applies the field; no DOM is touched.
 function dimNearbyStars(centerX: number, centerY: number, intensity: number): void {
-    const radius = 15; // % viewport radius
-    document.querySelectorAll('#starfield .ascii-star').forEach(el => {
-        const star = el as HTMLElement;
-        const x = parseFloat(star.dataset.x || '0');
-        const y = parseFloat(star.dataset.y || '0');
-        const dist = Math.sqrt(Math.pow(centerX - x, 2) + Math.pow(centerY - y, 2));
-
-        if (dist <= radius) {
-            const dimFactor = 1 - ((1 - dist / radius) * intensity * 0.4);
-            star.style.filter = `brightness(${dimFactor})`;
-        }
-    });
+    setStarfieldDim(centerX, centerY, 15, intensity);
 }
 
 // Restore dimmed stars
 function restoreDimmedStars(): void {
-    document.querySelectorAll('#starfield .ascii-star').forEach(el => {
-        const star = el as HTMLElement;
-        star.style.filter = '';
-    });
+    setStarfieldDim(0, 0, 0, 0);
 }
 
-// Brighten stars as shockwave passes
+// Brighten stars as shockwave passes — a ring field on the canvas.
 function brightenStarsInShockwave(
     centerX: number,
     centerY: number,
     radius: number,
     thickness: number
 ): void {
-    document.querySelectorAll('#starfield .ascii-star').forEach(el => {
-        const star = el as HTMLElement;
-        const x = parseFloat(star.dataset.x || '0');
-        const y = parseFloat(star.dataset.y || '0');
-        const dist = Math.sqrt(Math.pow(centerX - x, 2) + Math.pow(centerY - y, 2));
-
-        // Star is within the "ring" of current shockwave
-        if (dist > radius - thickness && dist < radius + thickness) {
-            // Add brightening class (CSS handles the visual intensity)
-            star.classList.add('shockwave-brightened', 'shockwave-active');
-
-            // Remove after brief flash
-            setTimeout(() => {
-                star.classList.remove('shockwave-active');
-                setTimeout(() => {
-                    star.classList.remove('shockwave-brightened');
-                }, 150);
-            }, 200);
-        }
-    });
+    setStarfieldShockwave(centerX, centerY, radius, thickness);
 }
 
 function animateArtisticProgenitor(elements: ArtisticSupernovaElements, x: number, y: number): void {
@@ -3167,6 +3098,10 @@ export function initCosmicEvents(): void {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
         return;
     }
+
+    // Build the supernova machine while nothing is happening: context creation
+    // and the big shader compile must never land on the trigger frame.
+    window.setTimeout(() => prewarmWebGLSupernova(), 4000);
 
     // Click-to-trigger mode: triple-tap anywhere to trigger supernova
     if (SUPERNOVA_CLICK_TRIGGER) {

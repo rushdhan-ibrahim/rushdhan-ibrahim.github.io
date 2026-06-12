@@ -30,6 +30,8 @@ export const ACTS: ActPalette[] = [
     { anchor: 'real-sky',     name: 'epilogue',     accent: [232, 217, 184], deep: [10, 10, 12], mid: [28, 26, 24],  intensity: 0.9 },
 ];
 
+import { onDocumentReflow, absoluteTop } from '../utils/offset-cache';
+
 type Vec3 = [number, number, number];
 type Listener = (deep: Vec3, mid: Vec3, accent: Vec3, intensity: number) => void;
 
@@ -63,13 +65,24 @@ function close3(a: Vec3, b: Vec3): boolean {
     return Math.abs(a[0] - b[0]) < 0.5 && Math.abs(a[1] - b[1]) < 0.5 && Math.abs(a[2] - b[2]) < 0.5;
 }
 
+// Anchor offsets are cached; the scroll path never reads layout.
+let anchorTops: { act: ActPalette; top: number }[] = [];
+
+function measureAnchors(): void {
+    anchorTops = ACTS
+        .filter(a => a.anchor !== null)
+        .map(a => {
+            const el = document.getElementById(a.anchor!);
+            return el ? { act: a, top: absoluteTop(el) } : null;
+        })
+        .filter((x): x is { act: ActPalette; top: number } => x !== null);
+}
+
 function activeAct(): ActPalette {
-    const mid = window.innerHeight * 0.45;
+    const threshold = window.scrollY + window.innerHeight * 0.45;
     let act = ACTS[0];
-    for (const a of ACTS) {
-        if (a.anchor === null) continue;
-        const el = document.getElementById(a.anchor);
-        if (el && el.getBoundingClientRect().top < mid) act = a;
+    for (const a of anchorTops) {
+        if (a.top < threshold) act = a.act;
     }
     return act;
 }
@@ -123,6 +136,10 @@ function onScroll(): void {
 
 export function initActs(): void {
     writeVars();
+    onDocumentReflow(() => {
+        measureAnchors();
+        onScroll();
+    });
     let pending = false;
     let trailing: number | null = null;
     window.addEventListener('scroll', () => {

@@ -67,10 +67,16 @@ p, li, blockquote {
     pointer-events: none;
 }
 
-/* When the shader carries the weather, the CSS nebulae become foreground
-   wisps rather than the whole sky. */
+/* When the shader carries the weather, the CSS nebulae stand down entirely —
+   two skies cost twice and read as one. */
 body.gl-on .nebula-layer {
-    opacity: 0.55;
+    display: none;
+}
+
+/* Elements under gravitational text-warp must not fight the reveal
+   transitions: the warp writes transform/filter every frame. */
+.warping {
+    transition: none !important;
 }
 
 /* ---------- Navigation: a floor appears under it once you descend ---------- */

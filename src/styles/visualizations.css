@@ -22,7 +22,6 @@
 .ascii-star {
     position: absolute;
     font-family: 'JetBrains Mono', monospace;
-    transition: all 0.4s ease-out;
 }
 
 .ascii-star.bright {
@@ -75,9 +74,12 @@
 .nebula {
     position: absolute;
     border-radius: 50%;
-    filter: blur(60px);
+    /* No filter: the radial gradients are already feathered; a 60px blur on
+       layers this large re-renders enormous GPU surfaces every frame of the
+       drift animation for nearly identical pixels. */
     mix-blend-mode: screen;
     pointer-events: none;
+    will-change: transform;
 }
 
 /* Deep purple nebula - distant, mysterious */
