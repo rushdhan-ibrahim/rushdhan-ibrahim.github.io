@@ -158,10 +158,28 @@ function registerLazySections(): void {
 
     // Idle-time guests: spectacle and memory, never blocking arrival or the
     // reader's first interactions. The cosmic machinery is the heaviest
-    // module in the project; it can afford to be the last thing awake.
+    // module in the project; it can afford to be the last thing awake —
+    // except that the first tap anywhere fast-tracks it, so the triple-tap
+    // trigger never has a dead period.
+    let cosmicStarted = false;
+    const ensureCosmic = () => {
+        if (cosmicStarted) return;
+        cosmicStarted = true;
+        void loadCosmic().then(m => m.initCosmicEvents());
+    };
     idle(() => void loadGreeting().then(m => m.initReturnGreeting()), 2000);
     idle(() => void loadConstellations().then(m => m.initConstellations()), 9000);
-    idle(() => void loadCosmic().then(m => m.initCosmicEvents()), 14000);
+    idle(ensureCosmic, 14000);
+    window.addEventListener('pointerdown', ensureCosmic, { once: true, passive: true });
+
+    // Warm the remaining section chunks once the page is long idle: a reader
+    // on a cold CDN edge should never wait for an instrument to wake.
+    idle(() => {
+        [loadGlass, loadThermo, loadSignal, loadChain, loadSuspicion, loadPayoff,
+            loadLightCone, loadJoining, loadCarol, loadWindow, loadMirror,
+            loadTransmission, loadCredence, loadRealSky, loadGame]
+            .forEach(loader => void loader().catch(() => { /* warmed best-effort */ }));
+    }, 25000);
 
     // Handle orientation changes on mobile
     let orientationTimeout: ReturnType<typeof setTimeout> | null = null;

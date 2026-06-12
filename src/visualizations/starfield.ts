@@ -318,8 +318,9 @@ function draw(now: number): void {
             }
         }
 
-        // Shockwave ring.
-        let bright = s.remembered || s.hoverBoost > 0.3;
+        // Shockwave ring. (Remembered stars keep their elevated base opacity,
+        // as before — the halo sprite is reserved for live attention.)
+        let bright = s.hoverBoost > 0.3;
         if (shockAlive && shock) {
             const sd = Math.hypot(shock.x - sx, shock.y - sy);
             if (sd > shock.radius - shock.thickness && sd < shock.radius + shock.thickness) {

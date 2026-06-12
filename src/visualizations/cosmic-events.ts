@@ -3112,9 +3112,11 @@ export function initCosmicEvents(): void {
         createTapIndicator();
 
         document.addEventListener('click', (e) => {
-            // Ignore clicks on interactive elements
+            // Ignore clicks on genuinely interactive elements — but NOT whole
+            // collapsible bodies: most of the essay lives inside them, and
+            // taps on prose should count toward the trigger.
             const target = e.target as HTMLElement;
-            if (target.closest('button, a, input, .collapsible, nav, .audio-toggle')) {
+            if (target.closest('button, a, input, textarea, select, .collapsible-header, nav, .audio-toggle, .ascii-interactive, .audio-invite, .fg-overlay, .progress-rail')) {
                 return;
             }
 
@@ -3127,6 +3129,12 @@ export function initCosmicEvents(): void {
             tapCount++;
             haptics.tap();  // Subtle tap feedback
             updateTapIndicator();
+
+            // A triple-CLICK on prose also selects the paragraph — clear the
+            // selection so the trigger doesn't flash highlighted text.
+            if (tapCount >= 2) {
+                window.getSelection()?.removeAllRanges();
+            }
 
             // Reset timer
             if (tapTimer !== null) {
