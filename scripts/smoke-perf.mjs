@@ -16,8 +16,8 @@ page.on('console', (msg) => {
 });
 page.on('pageerror', (err) => errors.push('PAGEERROR: ' + String(err).slice(0, 160)));
 
-await page.goto(url, { waitUntil: 'load' });
-await page.waitForTimeout(2500);
+await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+await page.waitForTimeout(3500);
 await page.evaluate(() => document.querySelector('.greeting-dismiss')?.click());
 
 // FPS sampler: counts rAF frames and the worst frame gap.
